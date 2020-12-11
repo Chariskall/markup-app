@@ -10,12 +10,16 @@ import dash_core_components as dcc
 import dash_html_components as html
 import dash_bootstrap_components as dbc
 from dash.dependencies import Input, Output, ALL, State
+import pandas as pd
+from datetime import datetime
 import plotly.express as px
+import re
+import json
+#import ast
 
 # Launch the application:
 app = dash.Dash(external_stylesheets = [dbc.themes.SUPERHERO])
 app.config.suppress_callback_exceptions = True
-server = app.server
 
 #=============================================================================#
 #                                                                             #
@@ -32,7 +36,10 @@ def add_input_group(input_list):
             dbc.InputGroup(
                     [
                         dbc.Label(i, width=7),
-                        dbc.InputGroupAddon('$', addon_type='prepend'),
+                        dbc.InputGroupAddon('$',
+                                            id={'type': 'addon',
+                                                'index': len(inputs)},
+                                            addon_type='prepend'),
                         dbc.Input(id={'type': 'input',
                                       'index': len(inputs)},
                                   placeholder='Amount'),
@@ -49,12 +56,20 @@ input_group = add_input_group(input_list)
 
 #============================== Add/Remove Button ============================#
 
+c = pd.read_csv('currencies.csv',sep=';')
+cs = c['Currency Symbol'] + ' - ' + c['Country and Currency']
+items = [
+    dbc.DropdownMenuItem(s,
+                         id={'type': 'dropdown',
+                             'index': 'item-'+str(i+1)}) for i,s in enumerate(cs)
+]
+
 button = html.Div(
     [
         dbc.InputGroup(
                 [dbc.Button('+', id='add-expense-button', className='mr-2'),
                  dbc.Button('-', id='remove-expense-button', className='mr-2'),
-                 dbc.InputGroupAddon('Add', addon_type='prepend'),
+                 dbc.DropdownMenu(items, label = '$', id='dropdown-menu', addon_type='prepend'),
                  dbc.Input(placeholder='Expense', id='expense-name',),
                 ], className='mb-5',
             )
@@ -68,7 +83,7 @@ total_expenses = dbc.FormGroup(
         dbc.Label('Total Expenses', className='h4'),
         dbc.Card([
             dbc.Label(id='total-expenses', className='h1'),
-        ], 
+        ],
             className='card text-center', body=True)
     ]
 )
@@ -120,8 +135,9 @@ form = dbc.Form(
 
 #========================== Projection Graph =================================#
 
-df = px.data.stocks()
-fig = px.line(df, x='date', y='GOOG')
+datelist = pd.date_range(datetime.today(), periods=12*2,freq='M').tolist()
+markup = range(10,250,10)
+fig = px.bar(x=datelist, y=markup)
 
 #============================== App Layout ===================================#
 
@@ -137,7 +153,8 @@ app.layout = dbc.Container(
             [
                 dbc.Col(
                     [
-                        html.Div(id='expense-list', children=input_group),
+                        html.Div(id='expense-list', children=input_group,
+                                 style=dict(height='525px',overflow='scroll')),
                         button,
                         total_expenses
                     ], width=4
@@ -163,11 +180,12 @@ app.layout = dbc.Container(
     [
         Input('add-expense-button', 'n_clicks'),
         Input('remove-expense-button', 'n_clicks'),
-        Input('expense-name','value')
+        Input('expense-name','value'),
+        Input('dropdown-menu', 'label')
     ],
     State('expense-list', 'children')
 )
-def add_remove_step(add_clicks, remove_clicks, text, div_list):
+def add_remove_step(add_clicks, remove_clicks, text, current_currency, div_list):
     # Identify who was clicked
     ctx = dash.callback_context
     if not ctx.triggered:
@@ -183,7 +201,9 @@ def add_remove_step(add_clicks, remove_clicks, text, div_list):
                 dbc.InputGroup(
                     [
                         dbc.Label(text, width=7),
-                        dbc.InputGroupAddon('$', addon_type='prepend'),
+                        dbc.InputGroupAddon(current_currency,
+                                            id={'type': 'addon',
+                                                'index': len(div_list)}, addon_type='prepend'),
                         dbc.Input(id={'type': 'input',
                                       'index': len(div_list)},
                                   placeholder='Amount'),
@@ -194,6 +214,36 @@ def add_remove_step(add_clicks, remove_clicks, text, div_list):
     elif len(div_list) > 0 and triggered_id == 'remove-expense-button':
         div_list = div_list[:-1]
     return div_list
+
+#============================= Choose Currency ===========================#
+
+@app.callback(
+    [
+        Output('dropdown-menu', 'label'),
+        Output({'type': 'addon', 'index': ALL}, 'children')
+    ],
+    Input({'type': 'dropdown', 'index': ALL}, 'n_clicks'),
+    State('expense-list', 'children')
+)
+def update_label(input, div_list):
+    # use a dictionary to map ids back to the desired label
+    id_lookup = {'item-'+str(i+1):s for (i, s) in enumerate(cs)}
+
+    ctx = dash.callback_context
+
+    if input is None:
+        # if no currency has been clicked, return dollar:'$'
+        return ['$',['$'] * len(div_list)]
+    elif not ctx.triggered:
+        raise dash.exceptions.PreventUpdate
+    else:
+        # this gets the id of the currency that triggered the callback
+        triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
+        dic = json.loads(triggered_id)
+        #dic = ast.literal_eval(triggered_id)
+        current_currency = re.findall('^(.*-)', id_lookup[dic['index']])[0][:-2]
+        return [current_currency,[current_currency] * len(div_list)]
+
 
 #============================= Calculation Outputs ===========================#
 
@@ -207,12 +257,13 @@ def add_remove_step(add_clicks, remove_clicks, text, div_list):
     [
         Input('calculate-button', 'n_clicks'),
         Input('price-markup', 'value'),
+        Input('dropdown-menu', 'label'),
         Input({'type': 'input', 'index': ALL}, 'value')
     ]
 )
-def on_button_click(n, markup, input):
+def on_button_click(n, markup, current_currency, input):
     if n is None:
-        return '$0', '$0', '$0'
+        return current_currency+'0', current_currency+'0', current_currency+'0'
     else:
         te = 0
         for i in input:
@@ -220,9 +271,11 @@ def on_button_click(n, markup, input):
                 te = te + float(i)
         pm = te*(markup/100)
         pp = te*(1 + markup/100)
-        return f'${pm:.2f}', f'${pp:.2f}', f'${te:.2f}'
+        return '{0}{1:.2f}'.format(current_currency,pm),\
+               '{0}{1:.2f}'.format(current_currency,pp),\
+               '{0}{1:.2f}'.format(current_currency,te)
 
 #=============================================================================#
-    
+
 if __name__ == '__main__':
     app.run_server()
