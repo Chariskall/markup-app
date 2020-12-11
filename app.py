@@ -19,6 +19,7 @@ import json
 # Launch the application:
 app = dash.Dash(external_stylesheets = [dbc.themes.SUPERHERO])
 app.config.suppress_callback_exceptions = True
+server = app.server
 
 #=============================================================================#
 #                                                                             #
