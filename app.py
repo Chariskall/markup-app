@@ -15,7 +15,6 @@ from datetime import datetime
 import plotly.express as px
 import re
 import json
-#import ast
 
 # Launch the application:
 app = dash.Dash(external_stylesheets = [dbc.themes.SUPERHERO])
